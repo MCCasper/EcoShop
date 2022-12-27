@@ -3,3 +3,4 @@ rootProject.name = 'EcoShop'
 // Core
 include ':eco-core'
 include ':eco-core:core-plugin'
+

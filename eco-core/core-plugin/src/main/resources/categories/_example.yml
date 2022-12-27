@@ -81,6 +81,8 @@ items:
       type: coins
       display: "$%value%"
 
+      limit: 16 # (Optional) The maximum amount that can be sold at once. Defaults to infinity if not specified.
+
       require: "%player_rank% > 1" # (Optional) This expression must hold true to be allowed to sell this item.
 
     gui:

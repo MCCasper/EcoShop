@@ -16,6 +16,7 @@ import com.willfp.eco.core.price.CombinedDisplayPrice
 import com.willfp.eco.core.price.ConfiguredPrice
 import com.willfp.eco.util.formatEco
 import com.willfp.ecoshop.EcoShopPlugin
+import com.willfp.ecoshop.event.EcoShopBuyEvent
 import com.willfp.ecoshop.event.EcoShopSellEvent
 import com.willfp.ecoshop.shop.gui.BuyMenu
 import com.willfp.ecoshop.shop.gui.SellMenu
@@ -93,12 +94,20 @@ class ShopItem(
 
     val sellMenu = SellMenu(this, plugin)
 
-    private val limit = config.getIntOrNull("buy.limit") ?: Int.MAX_VALUE
+    private val buyLimit = config.getIntOrNull("buy.limit") ?: Int.MAX_VALUE
+    private val sellLimit = config.getIntOrNull("sell.limit") ?: Int.MAX_VALUE
 
-    private val maxAtOnce = config.getIntOrNull("buy.max-at-once") ?: Int.MAX_VALUE
+    private val buyMaxAtOnce = config.getIntOrNull("buy.max-at-once") ?: Int.MAX_VALUE
+    private val sellMaxAtOnce = config.getIntOrNull("sell.max-at-once") ?: Int.MAX_VALUE
 
-    private val timesBoughtKey = PersistentDataKey(
+    val timesBoughtKey = PersistentDataKey(
         plugin.createNamespacedKey("${id}_times_bought"),
+        PersistentDataKeyType.INT,
+        0
+    )
+
+    val timesSoldKey = PersistentDataKey(
+        plugin.createNamespacedKey("${id}_times_sold"),
         PersistentDataKeyType.INT,
         0
     )
@@ -177,14 +186,24 @@ class ShopItem(
         }
     }
 
+    /** Get the max amount of times this item can be sold at a single time. */
+    fun getMaxSellsAtOnce(player: Player): Int {
+        return sellMaxAtOnce.coerceAtMost(getSellsLeft(player))
+    }
+
     /** Get the max amount of times this item can be bought at a single time. */
     fun getMaxBuysAtOnce(player: Player): Int {
-        return maxAtOnce.coerceAtMost(getBuysLeft(player))
+        return buyMaxAtOnce.coerceAtMost(getBuysLeft(player))
     }
 
     /** Get the max amount of times this player can buy this item again. */
     fun getBuysLeft(player: Player): Int {
-        return limit - player.profile.read(timesBoughtKey)
+        return buyLimit - player.profile.read(timesBoughtKey)
+    }
+
+    /** Get the max amount of times this player can buy this item again. */
+    fun getSellsLeft(player: Player): Int {
+        return sellLimit - player.profile.read(timesSoldKey)
     }
 
     /** If a [player] is allowed to purchase this item. */
@@ -194,7 +213,7 @@ class ShopItem(
             BuyType.ALT -> altBuyPrice ?: return BuyStatus.CANNOT_BUY
         }
 
-        if (player.profile.read(timesBoughtKey) + amount > limit) {
+        if (player.profile.read(timesBoughtKey) + amount > buyLimit) {
             return BuyStatus.BOUGHT_TOO_MANY
         }
 
@@ -228,10 +247,17 @@ class ShopItem(
     ) {
         require(amount in 1..getMaxBuysAtOnce(player))
 
+
         when (buyType) {
             BuyType.NORMAL -> buyPrice?.pay(player, amount.toDouble())
             BuyType.ALT -> altBuyPrice?.pay(player, amount.toDouble())
         }
+
+        val event = buyPrice?.let { EcoShopBuyEvent(player, this, it.price, buyType, amount, shop) }
+        if (event != null) {
+            Bukkit.getPluginManager().callEvent(event)
+        }
+
 
         if (item != null) {
             val queue = DropQueue(player)
@@ -264,11 +290,16 @@ class ShopItem(
     }
 
     /** Get if a [player] is allowed to sell this item. */
-    fun getSellStatus(player: Player): SellStatus {
+    fun getSellStatus(player: Player, amount: Int): SellStatus {
         // Can't sell a command
         if (item == null || sellPrice == null) {
             return SellStatus.CANNOT_SELL
         }
+
+        if (player.profile.read(timesSoldKey) + amount > sellLimit) {
+            return SellStatus.BOUGHT_TOO_MANY
+        }
+
 
         if (!player.hasPermission("ecoshop.sell.$id")) {
             return SellStatus.NO_PERMISSION
@@ -286,7 +317,7 @@ class ShopItem(
     /** Get if a [player] is allowed to sell this item. */
     @JvmOverloads
     fun getCurrentSellStatus(player: Player, amount: Int? = null): SellStatus {
-        val base = getSellStatus(player)
+        val base = getSellStatus(player, amount ?: 1)
 
         if (base != SellStatus.ALLOW) {
             return base
@@ -379,8 +410,6 @@ class ShopItem(
                 continue
             }
 
-
-
             var times = 0
 
             if (itemStack.amount <= left) {
@@ -396,6 +425,8 @@ class ShopItem(
             val event = EcoShopSellEvent(player, this, this.sellPrice!!, itemStack)
             Bukkit.getPluginManager().callEvent(event)
 
+            player.profile.write(timesSoldKey, player.profile.read(timesSoldKey) + itemStack.amount)
+
             multipliers[event.multiplier] = (multipliers[event.multiplier] ?: 0) + times
 
             if (left == 0) {
@@ -408,6 +439,10 @@ class ShopItem(
 
     fun resetTimesBought(player: OfflinePlayer) {
         player.profile.write(timesBoughtKey, 0)
+    }
+
+    fun resetTimesSold(player: OfflinePlayer) {
+        player.profile.write(timesSoldKey, 0)
     }
 
     fun getBuyPrice(buyType: BuyType) = when (buyType) {
@@ -438,7 +473,7 @@ val ItemStack.shopItem: ShopItem?
 
 fun ItemStack.isSellable(player: Player): Boolean {
     val item = this.shopItem ?: return false
-    if (item.getSellStatus(player) != SellStatus.ALLOW) {
+    if (item.getSellStatus(player, this.amount) != SellStatus.ALLOW) {
         return false
     }
 
@@ -447,7 +482,7 @@ fun ItemStack.isSellable(player: Player): Boolean {
 
 fun ItemStack.getUnitSellValue(player: Player): ConfiguredPrice {
     val item = this.shopItem ?: return ConfiguredPrice.FREE
-    if (item.getSellStatus(player) != SellStatus.ALLOW) {
+    if (item.getSellStatus(player, this.amount) != SellStatus.ALLOW) {
         return ConfiguredPrice.FREE
     }
 
@@ -468,6 +503,8 @@ fun ItemStack.sell(
 
     val event = EcoShopSellEvent(player, item, item.sellPrice!!, this)
     Bukkit.getPluginManager().callEvent(event)
+
+    player.profile.write(item.timesSoldKey, player.profile.read(item.timesSoldKey) + this.amount)
 
     price.giveTo(player, this.amount.toDouble() * event.multiplier)
 
@@ -522,6 +559,8 @@ fun Collection<ItemStack>.sell(
 
         val event = EcoShopSellEvent(player, item, item.sellPrice!!, itemStack)
         Bukkit.getPluginManager().callEvent(event)
+
+        player.profile.write(item.timesSoldKey, player.profile.read(item.timesSoldKey) + itemStack.amount)
 
         price.giveTo(player, itemStack.amount.toDouble() * event.multiplier)
 

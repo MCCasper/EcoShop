@@ -17,7 +17,8 @@ enum class SellStatus {
     MISSING_REQUIREMENTS,
     DONT_HAVE_ITEM,
     DONT_HAVE_ENOUGH,
-    ALLOW
+    ALLOW,
+    BOUGHT_TOO_MANY
 }
 
 val <T : Enum<T>> T.configKey: String

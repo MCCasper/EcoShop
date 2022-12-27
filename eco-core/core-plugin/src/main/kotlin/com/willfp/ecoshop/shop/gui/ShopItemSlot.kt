@@ -64,6 +64,19 @@ class ShopItemSlot(
                     plugin.langYml.getStrings("sell-price")
                         .replaceIn("%price%", item.sellPrice?.getDisplay(player) ?: "")
                 )
+                addLoreLines(
+                    when (val status = item.getSellStatus(player, 1)) {
+                        SellStatus.MISSING_REQUIREMENTS,
+                        SellStatus.NO_PERMISSION, -> plugin.langYml.getStrings("lore.${status.configKey}")
+
+                        else -> when (item.getSellsLeft(player)) {
+                            0 -> plugin.langYml.getStrings("cant-sell-again")
+
+                            else -> plugin.langYml.getStrings("sell-price")
+                                .replaceIn("%price%", item.sellPrice?.getDisplay(player) ?: "")
+                        }
+                    }
+                )
             }
 
             if (item.isShowingQuickBuySell) {

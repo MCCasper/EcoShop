@@ -126,7 +126,7 @@ class SellMenu(
                     config
                 ) {
                     min(
-                        item.getMaxBuysAtOnce(it),
+                        item.getMaxSellsAtOnce(it),
                         item.item?.item?.type?.maxStackSize ?: Int.MAX_VALUE
                     ).coerceAtMost(
                         min(
